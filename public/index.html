@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer WASD Shoot</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: black; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const socket = new WebSocket("ws://localhost:30000");
+
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        let player = undefined;
+        let players = {}; // 다른 플레이어들을 저장할 객체
+        let bullets = []; // 총알 저장
+        const keys = { w: false, a: false, s: false, d: false };
+
+        window.addEventListener("keydown", (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
+        window.addEventListener("keyup", (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+
+        window.addEventListener("click", (e) => {
+            const angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
+            const bullet = { x: player.x, y: player.y, dx: Math.cos(angle) * 6, dy: Math.sin(angle) * 6, size: 5 };
+            bullets.push(bullet);
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send("shoot", bullet); // 서버로 총알 정보 전송
+            }
+        });
+
+        function update() {
+            if (socket.readyState === WebSocket.OPEN && player) {
+                if (keys.w) player.y -= player.speed;
+                if (keys.s) player.y += player.speed;
+                if (keys.a) player.x -= player.speed;
+                if (keys.d) player.x += player.speed;
+                socket.send(`move ${player.x} ${player.y}`); // 이동 정보를 서버로 전송
+            }
+
+            bullets.forEach((b, i) => {
+                b.x += b.dx;
+                b.y += b.dy;
+                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) bullets.splice(i, 1);
+            });
+        }
+
+        function draw() {
+            if (socket.readyState === WebSocket.OPEN && player) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "white";
+                ctx.fillRect(player.x - player.size / 2, player.y - player.size / 2, player.size, player.size);
+                
+                Object.values(players).forEach(p => {
+                    ctx.fillStyle = "blue";
+                    ctx.fillRect(p.x - player.size / 2, p.y - player.size / 2, player.size, player.size);
+                });
+
+                bullets.forEach(b => {
+                    ctx.fillStyle = "white";
+                    ctx.save();
+                    ctx.translate(b.x, b.y);
+                    ctx.rotate(Math.atan2(b.dy, b.dx));
+                    ctx.fillRect(-b.size * 2, -b.size / 2, b.size * 4, b.size);
+                    ctx.restore();
+                });
+            }
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.players) {
+                const playerState = data.players;
+                players = { ...playerState };
+            }
+            else if (data.init) {
+                player = {
+                    x: data.init.x,
+                    y: data.init.y,
+                    size: 20,
+                    speed: 4
+                }
+            }
+        };
+
+        // socket.onmessage("newBullet", (newBullets) => {
+        //     bullets = [...newBullets]; // 서버에서 받은 총알 배열로 갱신
+        // });
+    </script>
+</body>
+</html>
