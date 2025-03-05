@@ -32,7 +32,7 @@
             const bullet = { x: player.x, y: player.y, dx: Math.cos(angle) * 6, dy: Math.sin(angle) * 6, size: 5 };
             bullets.push(bullet);
             if (socket.readyState === WebSocket.OPEN) {
-                socket.send("shoot", bullet); // 서버로 총알 정보 전송
+                socket.send(`shoot ${bullet.x} ${bullet.y} ${bullet.dx} ${bullet.dy} ${bullet.size}`); // 서버로 총알 정보 전송
             }
         });
 
@@ -44,12 +44,6 @@
                 if (keys.d) player.x += player.speed;
                 socket.send(`move ${player.x} ${player.y}`); // 이동 정보를 서버로 전송
             }
-
-            bullets.forEach((b, i) => {
-                b.x += b.dx;
-                b.y += b.dy;
-                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) bullets.splice(i, 1);
-            });
         }
 
         function draw() {
@@ -87,7 +81,10 @@
                 const playerState = data.players;
                 players = { ...playerState };
             }
-            else if (data.init) {
+            if (data.bullets) {
+                bullets = [...data.bullets];
+            }
+            if (data.init) {
                 player = {
                     x: data.init.x,
                     y: data.init.y,
@@ -96,10 +93,6 @@
                 }
             }
         };
-
-        // socket.onmessage("newBullet", (newBullets) => {
-        //     bullets = [...newBullets]; // 서버에서 받은 총알 배열로 갱신
-        // });
     </script>
 </body>
 </html>
