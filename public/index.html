@@ -3,99 +3,252 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multiplayer WASD Shoot</title>
+    <title>Multiplayer WASD Shooter</title>
     <style>
-        body { margin: 0; overflow: hidden; background: black; }
-        canvas { display: block; }
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: black; 
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+        }
+        #connectionStatus {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+        #playerCount {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
-    <script>
-        const socket = new WebSocket("ws://localhost:30000");
+    <div id="connectionStatus">Connecting...</div>
+    <div id="playerCount">Players: 0</div>
 
+    <script>
+        // Game constants
+        const SERVER_URL = "ws://localhost:30000";
+        const PLAYER_SIZE = 20;
+        const PLAYER_SPEED = 4;
+        const BULLET_SPEED = 6;
+        
+        // Game state
+        let gameState = {
+            playerId: null,
+            player: null,
+            players: {},
+            bullets: [],
+            isConnected: false
+        };
+        
+        // Input handling
+        const keys = { w: false, a: false, s: false, d: false };
+        
+        // DOM elements
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-
-        let player = undefined;
-        let players = {}; // 플레이어
-        let bullets = []; // 총알
-        const keys = { w: false, a: false, s: false, d: false };
-
-        window.addEventListener("keydown", (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
-        window.addEventListener("keyup", (e) => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
-
-        window.addEventListener("click", (e) => {
-            const angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
-            const bullet = { x: player.x, y: player.y, dx: Math.cos(angle) * 6, dy: Math.sin(angle) * 6, size: 5 };
-            bullets.push(bullet);
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(`shoot ${bullet.x} ${bullet.y} ${bullet.dx} ${bullet.dy} ${bullet.size}`); // 서버로 총알 정보 전송
+        const connectionStatus = document.getElementById("connectionStatus");
+        const playerCount = document.getElementById("playerCount");
+        
+        // Initialize canvas
+        function initCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // Handle window resize
+            window.addEventListener("resize", () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+        }
+        
+        // Initialize websocket connection
+        function initWebSocket() {
+            const socket = new WebSocket(SERVER_URL);
+            
+            socket.onopen = () => {
+                console.log("Connection established");
+                gameState.isConnected = true;
+                updateConnectionStatus("Connected");
+            };
+            
+            socket.onclose = () => {
+                console.log("Connection closed");
+                gameState.isConnected = false;
+                updateConnectionStatus("Disconnected");
+                
+                // Try to reconnect after 3 seconds
+                setTimeout(() => {
+                    updateConnectionStatus("Reconnecting...");
+                    initWebSocket();
+                }, 3000);
+            };
+            
+            socket.onerror = (error) => {
+                console.error("WebSocket error:", error);
+                updateConnectionStatus("Connection Error");
+            };
+            
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleServerMessage(data);
+                } catch (error) {
+                    console.error("Error parsing message:", error);
+                }
+            };
+            
+            // Return socket for sending messages
+            return socket;
+        }
+        
+        // Handle messages from the server
+        function handleServerMessage(data) {
+            if (data.type === "Init") {
+                // Initialize player
+                gameState.playerId = data.id;
+                gameState.player = {
+                    x: data.x,
+                    y: data.y,
+                    size: PLAYER_SIZE,
+                    speed: PLAYER_SPEED
+                };
+                console.log("Player initialized:", gameState.playerId);
+            } else if (data.type === "State") {
+                // Update game state
+                gameState.players = data.players;
+                gameState.bullets = data.bullets;
+                updatePlayerCount();
             }
-        });
-
-        function update() {
-            if (socket.readyState === WebSocket.OPEN && player) {
-                if (keys.w) player.y -= player.speed;
-                if (keys.s) player.y += player.speed;
-                if (keys.a) player.x -= player.speed;
-                if (keys.d) player.x += player.speed;
+        }
+        
+        // Update connection status display
+        function updateConnectionStatus(status) {
+            connectionStatus.textContent = status;
+        }
+        
+        // Update player count display
+        function updatePlayerCount() {
+            const count = Object.keys(gameState.players).length;
+            playerCount.textContent = `Players: ${count}`;
+        }
+        
+        // Initialize input handlers
+        function initInputHandlers(socket) {
+            // Keyboard events
+            window.addEventListener("keydown", (e) => { 
+                if (keys.hasOwnProperty(e.key)) keys[e.key] = true; 
+            });
+            
+            window.addEventListener("keyup", (e) => { 
+                if (keys.hasOwnProperty(e.key)) keys[e.key] = false; 
+            });
+            
+            // Mouse click for shooting
+            window.addEventListener("click", (e) => {
+                if (!gameState.player || !gameState.isConnected) return;
+                
+                const angle = Math.atan2(e.clientY - gameState.player.y, e.clientX - gameState.player.x);
+                const bulletSpeed = BULLET_SPEED;
+                const dx = Math.cos(angle) * bulletSpeed;
+                const dy = Math.sin(angle) * bulletSpeed;
+                
+                // Send shoot command to server
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(`shoot ${gameState.player.x} ${gameState.player.y} ${dx} ${dy} 5`);
+                }
+            });
+        }
+        
+        // Update game logic
+        function update(socket) {
+            if (!gameState.player || !gameState.isConnected) return;
+            
+            let moved = false;
+            const player = gameState.player;
+            
+            if (keys.w) { player.y -= player.speed; moved = true; }
+            if (keys.s) { player.y += player.speed; moved = true; }
+            if (keys.a) { player.x -= player.speed; moved = true; }
+            if (keys.d) { player.x += player.speed; moved = true; }
+            
+            // Send movement to server if player moved
+            if (moved && socket.readyState === WebSocket.OPEN) {
                 socket.send(`move ${player.x} ${player.y}`);
             }
         }
-
+        
+        // Render game
         function draw() {
-            if (socket.readyState === WebSocket.OPEN && player) {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "white";
-                ctx.fillRect(player.x - player.size / 2, player.y - player.size / 2, player.size, player.size);
-                
-                Object.values(players).forEach(p => {
-                    ctx.fillStyle = "blue";
-                    ctx.fillRect(p.x - player.size / 2, p.y - player.size / 2, player.size, player.size);
-                });
-
-                bullets.forEach(b => {
-                    ctx.fillStyle = "white";
-                    ctx.save();
-                    ctx.translate(b.x, b.y);
-                    ctx.rotate(Math.atan2(b.dy, b.dx));
-                    ctx.fillRect(-b.size * 2, -b.size / 2, b.size * 4, b.size);
-                    ctx.restore();
-                });
-            }
-        }
-
-        function gameLoop() {
-            update();
-            draw();
-            requestAnimationFrame(gameLoop);
-        }
-        gameLoop();
-
-        socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            // 소켓 연결 성공 시 초기화
-            if (data.init) {
-                player = {
-                    x: data.init.x,
-                    y: data.init.y,
-                    size: 20,
-                    speed: 4
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (!gameState.player) return;
+            
+            // Draw current player
+            ctx.fillStyle = "#00FF00"; // Green for current player
+            drawPlayer(gameState.player);
+            
+            // Draw other players
+            ctx.fillStyle = "#3333FF"; // Blue for other players
+            for (const [id, player] of Object.entries(gameState.players)) {
+                if (id !== gameState.playerId) {
+                    drawPlayer(player);
                 }
             }
-            // 플레이어 상태 동기화
-            if (data.players) {
-                const playerState = data.players;
-                players = { ...playerState };
+            
+            // Draw bullets
+            ctx.fillStyle = "#FFFFFF"; // White for bullets
+            for (const bullet of gameState.bullets) {
+                drawBullet(bullet);
             }
-            // 총알 상태 동기화
-            if (data.bullets) {
-                bullets = [...data.bullets];
-            }
-        };
+        }
+        
+        // Draw a player
+        function drawPlayer(player) {
+            const halfSize = PLAYER_SIZE / 2;
+            ctx.fillRect(player.x - halfSize, player.y - halfSize, PLAYER_SIZE, PLAYER_SIZE);
+        }
+        
+        // Draw a bullet
+        function drawBullet(bullet) {
+            ctx.save();
+            ctx.translate(bullet.x, bullet.y);
+            ctx.rotate(Math.atan2(bullet.dy, bullet.dx));
+            ctx.fillRect(-bullet.size * 2, -bullet.size / 2, bullet.size * 4, bullet.size);
+            ctx.restore();
+        }
+        
+        // Game loop
+        function gameLoop(socket) {
+            update(socket);
+            draw();
+            requestAnimationFrame(() => gameLoop(socket));
+        }
+        
+        // Initialize game
+        function initGame() {
+            initCanvas();
+            const socket = initWebSocket();
+            initInputHandlers(socket);
+            gameLoop(socket);
+        }
+        
+        // Start the game
+        initGame();
     </script>
 </body>
 </html>
